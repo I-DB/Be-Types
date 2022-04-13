@@ -3,10 +3,7 @@ import * as mongoose from 'mongoose'
 import * as bodyParser from 'body-parser'
 import * as morgan from 'morgan'
 import * as cookieParser from 'cookie-parser'
-// import passport from './auth/passport/bearer.strategy'
 import errorMiddleware from './middlewares/error.middleware'
-
-const router = express.Router()
 require('dotenv').config()
 
 class App {

@@ -8,6 +8,7 @@ import HttpException from '../middlewares/exceptions/http.exception'
 class PostController implements Controller {
 	public path = '/post'
 	public commentPath = '/post/:postId/comment'
+	public likePath = '/post/like/:postId'
 	public router = express.Router()
 	private Post = postModel
 
@@ -25,6 +26,8 @@ class PostController implements Controller {
 		this.router.post(this.commentPath, authMiddleware, this.createComment)
 		this.router.patch(this.commentPath, authMiddleware, this.updateComment)
 		this.router.delete(this.commentPath, authMiddleware, this.deleteComment)
+
+		this.router.patch(this.likePath, authMiddleware, this.likePost)
 	}
 
 	getAllposts = async (req: express.Request, res: express.Response) => {
@@ -64,7 +67,7 @@ class PostController implements Controller {
 			const { user } = res.locals
 
 			const chkPost = await this.chkPostWithUserId(postId, user.userId)
-			if (!chkPost) next(new HttpException(401, '글의 작성자만 수정할 수 있습니다'))
+			if (!chkPost) return next(new HttpException(401, '글의 작성자만 수정이 가능합니다'))
 
 			await this.Post.updateOne(
 				{ _id: postId },
@@ -77,11 +80,13 @@ class PostController implements Controller {
 	}
 
 	deletePost = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
-		const { postId } = req.params
-		const { user } = res.locals
 		try {
-			const chkPost = this.chkPostWithUserId(postId, user.userId)
-			if (!chkPost) next(new HttpException(401, '글의 작성자만 삭제할 수 있습니다'))
+			const { postId } = req.params
+			const { user } = res.locals
+			const chkPost = await this.chkPostWithUserId(postId, user.userId)
+			if (!chkPost) return next(new HttpException(401, '글의 작성자만 삭제할 수 있습니다'))
+
+			await this.Post.deleteOne({ postId, userId: user.userId })
 			res.json({ success: true })
 		} catch (error) {
 			res.send({ error })
@@ -112,34 +117,62 @@ class PostController implements Controller {
 		}
 	}
 
-	updateComment = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+	updateComment = async (
+		req: express.Request,
+		res: express.Response,
+		next: express.NextFunction
+	) => {
 		const { postId } = req.params
 		const { content, commentId } = req.body
 		const { user } = res.locals
 		try {
-			const chkComment = this.chkCommentWithUserId(postId, user.userId, commentId)
-			if (!chkComment) next(new HttpException(401, '댓글 작성자만 수정할 수 있습니다'))
-			return this.Post.findOne({ _id: postId }, (err, result) => {
+			const chkComment = await this.chkCommentWithUserId(postId, user.userId, commentId)
+			if (!chkComment) return next(new HttpException(401, '댓글 작성자만 수정할 수 있습니다'))
+			this.Post.findOne({ _id: postId }, (err, result) => {
 				result.comments.id(commentId).content = content
 				result.save()
 			})
+			res.send({ success: true })
 		} catch (error) {
 			res.send({ error })
 		}
 	}
 
-	deleteComment = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+	deleteComment = async (
+		req: express.Request,
+		res: express.Response,
+		next: express.NextFunction
+	) => {
 		const { postId } = req.params
 		const { commentId } = req.body
 		const { user } = res.locals
 
 		try {
-			const chkComment = this.chkCommentWithUserId(postId, user.userId, commentId)
-			if (!chkComment) next(new HttpException(401, '댓글 작성자만 삭제할 수 있습니다'))
-			return this.Post.findOne({ _id: postId }, (err, result) => {
+			const chkComment = await this.chkCommentWithUserId(postId, user.userId, commentId)
+			if (!chkComment) return next(new HttpException(401, '댓글 작성자만 삭제할 수 있습니다'))
+			this.Post.findOne({ _id: postId }, (err, result) => {
 				result.comments.id(commentId).remove()
 				result.save()
 			})
+			res.send({ success: true })
+		} catch (error) {
+			res.send({ error })
+		}
+	}
+
+	likePost = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+		const { postId } = req.params
+		const { user } = res.locals
+
+		try {
+			const chkLike = await this.chkLike(postId, user.userId)
+			if (chkLike) {
+				await this.Post.updateOne({ _id: postId }, { $pull: { liked: user.userId } })
+				res.send({ success: true, message: '추천취소 완료' })
+			} else {
+				await this.Post.updateOne({ _id: postId }, { $push: { liked: user.userId } })
+				res.send({ success: true, message: '추천 완료' })
+			}
 		} catch (error) {
 			res.send({ error })
 		}
@@ -156,10 +189,15 @@ class PostController implements Controller {
 			comments: {
 				$elemMatch: {
 					_id: commentId,
-					userId,
+					userId: userId,
 				},
 			},
 		})
+		return result
+	}
+
+	chkLike = async (postId, userId) => {
+		const result = await this.Post.findOne({ _id: postId, liked: userId })
 		return result
 	}
 }
